@@ -1,0 +1,44 @@
+name: Build Android Geode Mod
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Compile Android Binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Ninja Build Tool
+        uses: ashutoshvarma/setup-ninja@master
+        with:
+          version: 1.11.1
+
+      - name: Setup Android NDK
+        uses: nndst/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26b
+          add-to-path: true
+
+      - name: Build the Geode Mod Package
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          targets: android64 android32
+          combine: true
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+      - name: Upload Compiled .geode Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-frame-counter-mod
+          path: build/*.geode
+          

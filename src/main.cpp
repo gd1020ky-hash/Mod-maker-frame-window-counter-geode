@@ -1,148 +1,191 @@
 #include <Geode/Geode.hpp>
-#include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
-#include <string>
-#include <map>
-#include <format> // C++23 現代化字串格式化工具
+#include <Geode/modify/PauseLayer.hpp>
+#include <Geode/modify/PlayerObject.hpp>
+#include <fstream>
+#include "nandl.hpp"
 
 using namespace geode::prelude;
 
-// 全局遊戲狀態追蹤結構
-struct FrameTracker {
-    int last_click_frame = 0;
-    int current_frame = 0;
-    int total_inputs = 0;
-    std::map<int, int> window_buckets;
-    float total_sigma_precision = 0.0f; 
-};
-
-static FrameTracker g_tracker;
-CCLabelBMFont* g_nan_hud_label = nullptr;
-
-// 經典 NaN GD 顏色分配矩陣
-ccColor3B getNaNGDColor(int window) {
-    if (window == 1) return {255, 0, 0};       // 紅色 (☠️ 1幀神蹟)
-    if (window == 2) return {255, 127, 0};     // 橘色
-    if (window == 3) return {255, 255, 0};     // 黃色
-    if (window >= 4 && window <= 6) return {0, 255, 0}; // 綠色
-    return {0, 191, 255};                      // 藍色
-}
-
-// 播放 NaN GD 經典漸變音效（按幀縮小降低音調）
-void playWindowSound(int window) {
-    // 💡 修正：Geode v5.x 移除舊版音效引擎，全面改用內建的 FMOD 系統指引
-    auto* fmod_sys = log_cast<FMOD::System*>(FMODAudioEngine::sharedEngine()->m_system);
-    if (!fmod_sys) return;
-
-    // 基礎音調設定：當點擊幀越接近 1 幀（越難），音調就越低沉、沉重
-    float pitch_modifier = 0.5f + (static_cast<float>(window - 1) * 0.15f);
-    if (pitch_modifier > 2.0f) pitch_modifier = 2.0f; 
-
-    // 調用 Geode 檔案管理員載入剛剛在 mod.json 綁定的音效檔案
-    auto sfx_path = Mod::get()->getResourcesDir() / "nan_bell.mp3";
-    
-    FMOD::Sound* sound = nullptr;
-    fmod_sys->createSound(sfx_path.string().c_str(), FMOD_DEFAULT, nullptr, &sound);
-    
-    if (sound) {
-        FMOD::Channel* channel = nullptr;
-        fmod_sys->playSound(sound, nullptr, false, &channel);
-        if (channel) {
-            channel->setPitch(pitch_modifier);
-        }
-    }
-}
-
-class $modify(MyGameLayer, GJBaseGameLayer) {
-    void update(float dt) {
-        GJBaseGameLayer::update(dt);
-        g_tracker.current_frame++;
-    }
-
-    void handleButton(bool down, int buttonId, bool isPlayer1) {
-        GJBaseGameLayer::handleButton(down, buttonId, isPlayer1);
-
-        if (down && isPlayer1 && m_player1) {
-            if (g_tracker.last_click_frame != 0) {
-                int delta_frames = g_tracker.current_frame - g_tracker.last_click_frame;
-
-                if (delta_frames >= 1 && delta_frames <= 20) {
-                    g_tracker.window_buckets[delta_frames]++;
-                    g_tracker.total_inputs++;
-                    
-                    float precision_weight = 10.0f / static_cast<float>(delta_frames);
-                    g_tracker.total_sigma_precision += precision_weight;
-
-                    // 觸發音效與動畫層
-                    playWindowSound(delta_frames);
-                    spawnVisualCircle(delta_frames);
-                    updateNaNDLHUD(delta_frames);
-                }
-            }
-            g_tracker.last_click_frame = g_tracker.current_frame;
-        }
-    }
-
-    // 在玩家方塊上方渲染動態浮動擴散圈圈
-    void spawnVisualCircle(int window) {
-        auto player_pos = m_player1->getPosition();
-        auto* dot = CCDrawNode::create();
-        ccColor3B dot_color = getNaNGDColor(window);
+// 1. PlayLayer Hook (Handles UI, Math Updates, and Data Export)
+struct $modify(FBPlayLayer, PlayLayer) {
+    struct Fields {
+        std::vector<NaNdL::FrameAction> sessionActions;
+        std::vector<NaNdL::WindowPreset> windowPresets;
+        NaNdL::PrecisionParams precisionParams;
+        NaNdL::PrecisionResults precisionResults;
         
-        float radius = 12.0f - (window * 0.3f);
-        if (radius < 4.0f) radius = 4.0f;
+        CCLabelBMFont* liveHudLabel = nullptr;
+        CCLabelBMFont* precisionHudLabel = nullptr;
         
-        dot->drawDot({0, 0}, radius, ccc4f(dot_color.r/255.0f, dot_color.g/255.0f, dot_color.b/255.0f, 1.0f));
-        dot->setPosition(player_pos);
-        this->addChild(dot, 1000);
+        double lastInputTime = 0.0;
+        int currentFrameIndex = 0;
+    };
 
-        auto text_str = std::to_string(window);
-        auto* text_marker = CCLabelBMFont::create(text_str.c_str(), "chatFont.fnt");
-        text_marker->setPosition({player_pos.x, player_pos.y + 20.0f});
-        text_marker->setScale(0.5f);
-        text_marker->setColor(dot_color);
-        this->addChild(text_marker, 1001);
+    bool init(GJGameLevel* level, bool secret, bool practice) {
+        if (!PlayLayer::init(level, secret, practice)) return false;
 
-        // 漸隱並向上飄移的 Cocos2d 動態軌跡
-        auto* fade_out = CCFadeOut::create(0.4f);
-        auto* move_up = CCMoveBy::create(0.4f, {0, 15.0f});
-        auto* spawn_actions = CCSpawn::create(fade_out, move_up, nullptr);
-        auto* remove_node = CCRemoveSelf::create();
-        auto* sequence = CCSequence::create(spawn_actions, remove_node, nullptr);
+        m_fields->windowPresets = {
+            {1, 1, "1F", true, 0},
+            {2, 2, "2F", true, 0},
+            {3, 4, "Tight", true, 0}
+        };
 
-        dot->runAction(static_cast<CCAction*>(sequence->clone()));
-        text_marker->runAction(sequence);
-    }
+        auto winSize = CCDirector::sharedDirector()->getWinSize();
 
-    void updateNaNDLHUD(int latest_window) {
-        if (!g_nan_hud_label) return;
+        // Main FWC HUD
+        m_fields->liveHudLabel = CCLabelBMFont::create("FB FWC: 0", "bigFont.fnt");
+        m_fields->liveHudLabel->setScale(0.35f);
+        m_fields->liveHudLabel->setAnchorPoint({0.0f, 1.0f});
+        m_fields->liveHudLabel->setPosition({5.0f, winSize.height - 5.0f});
+        m_fields->liveHudLabel->setZOrder(999);
+        this->addChild(m_fields->liveHudLabel);
 
-        float live_sigma = 0.0f;
-        if (g_tracker.total_inputs > 0) {
-            live_sigma = (g_tracker.total_sigma_precision / (g_tracker.current_frame / 240.0f)) * 15.0f;
-        }
+        // NaNdL Precision HUD
+        m_fields->precisionHudLabel = CCLabelBMFont::create("L*: 0.00", "bigFont.fnt");
+        m_fields->precisionHudLabel->setScale(0.35f);
+        m_fields->precisionHudLabel->setAnchorPoint({0.0f, 0.0f});
+        m_fields->precisionHudLabel->setPosition({5.0f, 5.0f});
+        m_fields->precisionHudLabel->setZOrder(999);
+        this->addChild(m_fields->precisionHudLabel);
 
-        // 使用 C++23 的 std::format 進行高速字串安全拼接，杜絕舊版崩潰
-        std::string hud_text = std::format("F-Window: {} | NaNDL Precision: {} σ/s", latest_window, static_cast<int>(live_sigma));
-        
-        g_nan_hud_label->setString(hud_text.c_str());
-        g_nan_hud_label->setColor(getNaNGDColor(latest_window));
-    }
-};
-
-class $modify(MyPlayLayer, PlayLayer) {
-    bool init(GJGameLevel* level, bool useReplay, bool dontRun) {
-        if (!PlayLayer::init(level, useReplay, dontRun)) return false;
-
-        g_tracker = FrameTracker();
-
-        auto winSize = CCDirector::get()->getWinSize();
-        g_nan_hud_label = CCLabelBMFont::create("F-Window: None | NaNDL: 0 σ/s", "goldFont.fnt");
-        g_nan_hud_label->setScale(0.45f);
-        g_nan_hud_label->setPosition({winSize.width / 2, winSize.height - 20.0f});
-        
-        this->addChild(g_nan_hud_label, 999);
         return true;
     }
+
+    void update(float dt) {
+        PlayLayer::update(dt);
+
+        if (m_fields->liveHudLabel) {
+            std::string hudText = fmt::format("Inputs: {}", m_fields->sessionActions.size());
+            for (const auto& p : m_fields->windowPresets) {
+                if (p.showInHud) hudText += fmt::format(" | {}: {}", p.labelText, p.hitCount);
+            }
+            m_fields->liveHudLabel->setString(hudText.c_str());
+        }
+
+        if (m_fields->precisionHudLabel && m_fields->precisionResults.isDirty) {
+            m_fields->precisionResults = NaNdL::solve_all_dimensions(
+                m_fields->sessionActions, m_fields->precisionParams
+            );
+            
+            std::string lText = fmt::format(
+                "L* Base: {:.2f} | Total: {:.2f}",
+                m_fields->precisionResults.base_L,
+                m_fields->precisionResults.All_L
+            );
+            m_fields->precisionHudLabel->setString(lText.c_str());
+        }
+    }
+
+    void resetLevel() {
+        if (!m_fields->sessionActions.empty()) {
+            this->exportMacroFiles();
+            m_fields->sessionActions.clear();
+            for (auto& p : m_fields->windowPresets) p.hitCount = 0;
+            m_fields->currentFrameIndex = 0;
+            m_fields->lastInputTime = 0.0;
+        }
+        PlayLayer::resetLevel();
+    }
+
+    void exportMacroFiles() {
+        matjson::Value root = matjson::Object();
+        root["mod"] = "OP frame window counter";
+        root["level_id"] = m_level->m_levelID.value();
+        root["level_name"] = std::string(m_level->m_levelName);
+        root["l_star_final"] = m_fields->precisionResults.All_L;
+
+        matjson::Value actArray = matjson::Array();
+        for (const auto& act : m_fields->sessionActions) {
+            actArray.push(act.toJson());
+        }
+        root["inputs"] = actArray;
+
+        std::filesystem::path saveDir = Mod::get()->getSaveDir();
+        std::filesystem::create_directories(saveDir);
+        std::filesystem::path fullPath = saveDir / fmt::format("run_{}.fwc.json", std::time(nullptr));
+
+        std::ofstream outFile(fullPath);
+        if (outFile.is_open()) {
+            outFile << root.dump(matjson::NO_INDENT);
+            outFile.close();
+        }
+    }
 };
-3
+
+// 2. PlayerObject Hook (Handles the actual GD 2.2 input tracking)
+struct $modify(FBPlayerObject, PlayerObject) {
+    void pushButton(PlayerButton btn) {
+        PlayerObject::pushButton(btn);
+
+        // Fetch the active PlayLayer to send the data to it
+        auto playLayer = PlayLayer::get();
+        if (!playLayer) return;
+
+        // Geode cross-class field access
+        auto fbPlayLayer = static_cast<FBPlayLayer*>(playLayer);
+
+        double currentTime = fbPlayLayer->m_gameState.m_levelTime;
+        double deltaMs = (currentTime - fbPlayLayer->m_fields->lastInputTime) * 1000.0;
+        if (deltaMs <= 0.0) deltaMs = 16.667;
+
+        fbPlayLayer->m_fields->lastInputTime = currentTime;
+        fbPlayLayer->m_fields->currentFrameIndex++;
+
+        // Track Camera Matrix & Physics
+        CCPoint camPos = playLayer->getPosition();
+        float camScale = playLayer->getScale();
+        
+        bool isPlayer2 = (this == playLayer->m_player2);
+        double yVel = this->m_yVelocity;
+
+        NaNdL::FrameAction action;
+        action.frame = fbPlayLayer->m_fields->currentFrameIndex;
+        action.timestampSeconds = currentTime;
+        action.windowMs = deltaMs;
+        action.levelPercent = playLayer->getCurrentPercentInt();
+        action.isPlayer2 = isPlayer2;
+        action.camX = camPos.x;
+        action.camY = camPos.y;
+        action.camZoom = camScale;
+        action.yVelocity = yVel;
+
+        fbPlayLayer->m_fields->sessionActions.push_back(action);
+        fbPlayLayer->m_fields->precisionResults.isDirty = true;
+
+        // Count frames for HUD
+        int frames = std::max(1, static_cast<int>(std::round(deltaMs / (1000.0 / 240.0))));
+        for (auto& preset : fbPlayLayer->m_fields->windowPresets) {
+            if (frames >= preset.minFrames && frames <= preset.maxFrames) {
+                preset.hitCount++;
+            }
+        }
+    }
+};
+
+// 3. PauseLayer Hook (UI Settings button)
+struct $modify(FBPauseLayer, PauseLayer) {
+    void customSetup() {
+        PauseLayer::customSetup();
+
+        auto menu = this->getChildByID("right-button-menu");
+        if (!menu) return;
+
+        auto btnSprite = CCSprite::createWithSpriteFrameName("GJ_timeIcon_001.png");
+        auto btn = CCMenuItemSpriteExtra::create(
+            btnSprite,
+            this,
+            menu_selector(FBPauseLayer::onOpenFWCEditor)
+        );
+        menu->addChild(btn);
+        menu->updateLayout();
+    }
+
+    void onOpenFWCEditor(CCObject* sender) {
+        FLAlertLayer::create(
+            "OP FWC NaNdL",
+            "Data tracking active.\nCamera Matrices and Physics logging enabled.\nData exports to Android config folder on death.",
+            "OK"
+        )->show();
+    }
+};

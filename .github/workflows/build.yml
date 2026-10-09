@@ -21,11 +21,9 @@ jobs:
         with:
           version: 1.11.1
 
-      # 讓 Geode 官方官方專屬 Action 自動接管 Android SDK/NDK 下載與配置，防範路徑遺失
       - name: Build the Geode Mod Package
         uses: geode-sdk/build-geode-mod@main
         with:
-          # 僅針對 Android 的 64 位元與 32 位元架構進行交叉編譯
           targets: android64 android32
           combine: true
           

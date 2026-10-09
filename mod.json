@@ -1,19 +1,17 @@
 {
     "geode": "5.10.1",
     "gd": {
-        "android": "2.2081"
+        "android": "2.2074"
     },
-    "id": "mod maker.frame_window_counter",
+    "id": "nangd.frame_window_counter",
     "version": "1.0.0",
-    "name": "NaN GD Frame Counter (Android Only)",
-    "developer": "Mod Maker",
-    "description": "Android-exclusive 240Hz frame window timing HUD with custom visual circles and audio hits.",
+    "name": "best Frame Counter but (Android Only)",
+    "developer": "NanGD",
+    "description": "Android-exclusive 240Hz frame window timing HUD with dynamic pitch bell triggers.",
     "dependencies": [],
     "resources": {
         "sfx": [
-            "resources/frame_perfect.mp3",
-            "resources/tight_window.mp3",
-            "resources/normal_click.mp3"
+            "resources/nan_bell.mp3"
         ]
     }
 }

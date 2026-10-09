@@ -21,8 +21,9 @@ jobs:
         with:
           version: 1.11.1
 
+      # 修正：將原本的 nndst/setup-ndk 改為正確的 nttld/setup-ndk 官方庫
       - name: Setup Android NDK
-        uses: nndst/setup-ndk@v1
+        uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
           ndk-version: r26b

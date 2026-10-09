@@ -1,0 +1,19 @@
+{
+    "geode": "5.10.1",
+    "gd": {
+        "android": "2.2081"
+    },
+    "id": "mod maker.frame_window_counter",
+    "version": "1.0.0",
+    "name": "NaN GD Frame Counter (Android Only)",
+    "developer": "Mod Maker",
+    "description": "Android-exclusive 240Hz frame window timing HUD with custom visual circles and audio hits.",
+    "dependencies": [],
+    "resources": {
+        "sfx": [
+            "resources/frame_perfect.mp3",
+            "resources/tight_window.mp3",
+            "resources/normal_click.mp3"
+        ]
+    }
+}

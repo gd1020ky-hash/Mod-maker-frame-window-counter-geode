@@ -21,25 +21,11 @@ jobs:
         with:
           version: 1.11.1
 
-      # 修正：將原本的 nndst/setup-ndk 改為正確的 nttld/setup-ndk 官方庫
-      - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r26b
-          add-to-path: true
-
+      # 讓 Geode 官方官方專屬 Action 自動接管 Android SDK/NDK 下載與配置，防範路徑遺失
       - name: Build the Geode Mod Package
         uses: geode-sdk/build-geode-mod@main
         with:
+          # 僅針對 Android 的 64 位元與 32 位元架構進行交叉編譯
           targets: android64 android32
           combine: true
-        env:
-          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
-
-      - name: Upload Compiled .geode Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-frame-counter-mod
-          path: build/*.geode
           

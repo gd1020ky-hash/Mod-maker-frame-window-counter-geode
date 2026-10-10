@@ -3,11 +3,11 @@
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <fstream>
+#include <vector>
 #include "nandl.hpp"
 
 using namespace geode::prelude;
 
-// 1. PlayLayer Hook (Handles UI, Math Updates, and Data Export)
 struct $modify(FBPlayLayer, PlayLayer) {
     struct Fields {
         std::vector<NaNdL::FrameAction> sessionActions;
@@ -33,15 +33,13 @@ struct $modify(FBPlayLayer, PlayLayer) {
 
         auto winSize = CCDirector::sharedDirector()->getWinSize();
 
-        // Main FWC HUD
-        m_fields->liveHudLabel = CCLabelBMFont::create("FB FWC: 0", "bigFont.fnt");
+        m_fields->liveHudLabel = CCLabelBMFont::create("OP FWC: 0", "bigFont.fnt");
         m_fields->liveHudLabel->setScale(0.35f);
         m_fields->liveHudLabel->setAnchorPoint({0.0f, 1.0f});
         m_fields->liveHudLabel->setPosition({5.0f, winSize.height - 5.0f});
         m_fields->liveHudLabel->setZOrder(999);
         this->addChild(m_fields->liveHudLabel);
 
-        // NaNdL Precision HUD
         m_fields->precisionHudLabel = CCLabelBMFont::create("L*: 0.00", "bigFont.fnt");
         m_fields->precisionHudLabel->setScale(0.35f);
         m_fields->precisionHudLabel->setAnchorPoint({0.0f, 0.0f});
@@ -89,15 +87,16 @@ struct $modify(FBPlayLayer, PlayLayer) {
     }
 
     void exportMacroFiles() {
-        matjson::Value root = matjson::Object();
+        matjson::Value root;
         root["mod"] = "OP frame window counter";
         root["level_id"] = m_level->m_levelID.value();
         root["level_name"] = std::string(m_level->m_levelName);
         root["l_star_final"] = m_fields->precisionResults.All_L;
 
-        matjson::Value actArray = matjson::Array();
+        // V3 Safe JSON Array
+        std::vector<matjson::Value> actArray;
         for (const auto& act : m_fields->sessionActions) {
-            actArray.push(act.toJson());
+            actArray.push_back(act.toJson());
         }
         root["inputs"] = actArray;
 
@@ -113,16 +112,13 @@ struct $modify(FBPlayLayer, PlayLayer) {
     }
 };
 
-// 2. PlayerObject Hook (Handles the actual GD 2.2 input tracking)
 struct $modify(FBPlayerObject, PlayerObject) {
     void pushButton(PlayerButton btn) {
         PlayerObject::pushButton(btn);
 
-        // Fetch the active PlayLayer to send the data to it
         auto playLayer = PlayLayer::get();
         if (!playLayer) return;
 
-        // Geode cross-class field access
         auto fbPlayLayer = static_cast<FBPlayLayer*>(playLayer);
 
         double currentTime = fbPlayLayer->m_gameState.m_levelTime;
@@ -132,7 +128,6 @@ struct $modify(FBPlayerObject, PlayerObject) {
         fbPlayLayer->m_fields->lastInputTime = currentTime;
         fbPlayLayer->m_fields->currentFrameIndex++;
 
-        // Track Camera Matrix & Physics
         CCPoint camPos = playLayer->getPosition();
         float camScale = playLayer->getScale();
         
@@ -153,7 +148,6 @@ struct $modify(FBPlayerObject, PlayerObject) {
         fbPlayLayer->m_fields->sessionActions.push_back(action);
         fbPlayLayer->m_fields->precisionResults.isDirty = true;
 
-        // Count frames for HUD
         int frames = std::max(1, static_cast<int>(std::round(deltaMs / (1000.0 / 240.0))));
         for (auto& preset : fbPlayLayer->m_fields->windowPresets) {
             if (frames >= preset.minFrames && frames <= preset.maxFrames) {
@@ -163,7 +157,6 @@ struct $modify(FBPlayerObject, PlayerObject) {
     }
 };
 
-// 3. PauseLayer Hook (UI Settings button)
 struct $modify(FBPauseLayer, PauseLayer) {
     void customSetup() {
         PauseLayer::customSetup();

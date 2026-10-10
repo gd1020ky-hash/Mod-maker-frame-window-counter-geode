@@ -16,25 +16,26 @@ namespace NaNdL {
     };
 
     struct FrameAction {
-        int frame = 0;
-        double timestampSeconds = 0.0;
-        double windowMs = 16.667;
+        int frame = 0;              // Absolute frame index
+        int frameDelta = 1;         // Exact integer frame window gap
+        double windowMs = 16.667;   // Millisecond representation for erfc
         float levelPercent = 0.0f;
         bool isPlayer2 = false;
+        bool down = true;
         
         float camX = 0.0f;
         float camY = 0.0f;
         float camZoom = 1.0f;
         double yVelocity = 0.0;
 
-        // V3 Safe JSON Object Initialization
         matjson::Value toJson() const {
             matjson::Value obj; 
             obj["frame"] = frame;
-            obj["timestamp"] = timestampSeconds;
+            obj["frame_delta"] = frameDelta;
             obj["window_ms"] = windowMs;
             obj["percent"] = levelPercent;
             obj["p2"] = isPlayer2;
+            obj["down"] = down;
             obj["cam_x"] = camX;
             obj["cam_y"] = camY;
             obj["cam_zoom"] = camZoom;
@@ -56,8 +57,10 @@ namespace NaNdL {
         bool isDirty = false;
     };
 
-    inline double calculate_base_L(double frame_window_ms, double target_window_ms = 16.667) {
-        if (frame_window_ms <= 0.0) return 1000.0;
+    // 100% Accurate erfc calculation mapped from exact integer frame windows
+    inline double calculate_base_L(int frame_delta, double target_window_ms = 16.667) {
+        if (frame_delta <= 0) return 1000.0;
+        double frame_window_ms = static_cast<double>(frame_delta) * (1000.0 / 240.0);
         double sigma = target_window_ms / 3.0;
         double z = frame_window_ms / (sigma * std::sqrt(2.0));
         double erfc_val = std::erfc(z);
@@ -75,8 +78,9 @@ namespace NaNdL {
         int totalInputs = 0;
 
         for (const auto& act : actions) {
+            if (!act.down) continue;
             totalInputs++;
-            double base = calculate_base_L(act.windowMs, 1000.0 / params.targetTPS);
+            double base = calculate_base_L(act.frameDelta, 1000.0 / params.targetTPS);
             
             double p = std::clamp(act.levelPercent / 100.0f, 0.0f, 1.0f);
             double kt = 1.0 + (params.K_T * std::pow(p, 2.5));

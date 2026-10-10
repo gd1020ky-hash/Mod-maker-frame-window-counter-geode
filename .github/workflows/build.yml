@@ -1,29 +1,38 @@
-name: Build Android Geode Mod
+name: Build Geode Mod
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main, master ]
   pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
-    name: Compile Android Binaries
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - name: Android32
+            target: Android32
+          - name: Android64
+            target: Android64
+
+    name: ${{ matrix.config.name }}
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Ninja Build Tool
-        uses: ashutoshvarma/setup-ninja@master
-        with:
-          version: 1.11.1
-
-      - name: Build the Geode Mod Package
+      - name: Build Geode Mod
         uses: geode-sdk/build-geode-mod@main
         with:
-          targets: android64 android32
-          combine: true
-          
+          target: ${{ matrix.config.target }}
+          sdk: 'latest'
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.config.name }}-mod
+          path: build/*.geode
